@@ -85,8 +85,20 @@ def send_email(html, subject, recipients):
 
     service = _get_gmail_service()
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    result = service.users().messages().send(userId="me", body={"raw": raw}).execute()
     print(f"  Email sent to {len(recipients)} recipients")
+
+    # When sending to yourself, Gmail creates duplicate (Sent + Inbox).
+    # Remove INBOX label from the sent copy so only one appears.
+    if GMAIL_USER in recipients:
+        try:
+            msg_id = result["id"]
+            service.users().messages().modify(
+                userId="me", id=msg_id,
+                body={"removeLabelIds": ["INBOX"]}
+            ).execute()
+        except Exception:
+            pass
 
 
 # --- Feed Fetching ---

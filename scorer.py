@@ -52,7 +52,7 @@ def build_scoring_prompt(articles, interests):
     prompt += "- 7-8: Strongly related technology or business area" + chr(10)
     prompt += "- 4-6: Tangentially related" + chr(10)
     prompt += "- 1-3: Not relevant" + chr(10) + chr(10)
-    prompt += "Respond with ONLY a JSON object. Each element must have:" + chr(10)
+    prompt += "Respond with ONLY a JSON object like: {\"articles\": [{...}]}. Each element must have:" + chr(10)
     prompt += "- index: the article number" + chr(10)
     prompt += "- score: integer 1-10" + chr(10)
     prompt += "- reason: brief explanation" + chr(10) + chr(10)
@@ -93,7 +93,10 @@ def score_articles_ai(articles, topic):
                 text = text.split(chr(10), 1)[1]
                 text = text.rsplit(FENCE, 1)[0]
             result = json.loads(text)
-            scored = result.get("articles", [])
+            if isinstance(result, list):
+                scored = result
+            else:
+                scored = result.get("articles", result if isinstance(result, list) else [])
             for item in scored:
                 idx = item.get("index", -1)
                 if _in_range(idx, len(batch)):

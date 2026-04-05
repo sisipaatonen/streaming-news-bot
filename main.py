@@ -2,24 +2,26 @@ import os
 import time
 import schedule
 from datetime import datetime
-from bot import run
 
-SEND_TIME = os.environ.get("SEND_TIME", "08:00")
+import startup
+from bot import run_digest
+from feeds import DIGEST_CONFIG
 
-def job():
-    print(f"[{datetime.now()}] Running scheduled news digest...")
-    try:
-        run()
-    except Exception as e:
-        print(f"Error: {e}")
+print("News Bot starting...")
+for topic, config in DIGEST_CONFIG.items():
+    send_time = os.environ.get(f"SEND_TIME_{topic.upper()}", config["send_time"])
+    print(f"  {topic}: daily at {send_time} UTC")
+    schedule.every().day.at(send_time).do(run_digest, topic)
 
-print(f"📡 Streaming News Bot starting — will send daily at {SEND_TIME} Helsinki time")
-schedule.every().day.at(SEND_TIME).do(job)
-
-# Run immediately on startup if env says so (for testing)
 if os.environ.get("RUN_ON_START", "").lower() == "true":
-    print("RUN_ON_START=true — running now...")
-    job()
+    topic = os.environ.get("RUN_TOPIC", "")
+    if topic:
+        print(f"RUN_ON_START with topic={topic}")
+        run_digest(topic)
+    else:
+        print("RUN_ON_START - running all digests")
+        for topic in DIGEST_CONFIG:
+            run_digest(topic)
 
 while True:
     schedule.run_pending()

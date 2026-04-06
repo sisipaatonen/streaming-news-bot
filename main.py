@@ -1,7 +1,7 @@
 import os
 import time
 import schedule
-from datetime import datetime
+from datetime import datetime, timezone
 
 import startup
 from bot import run_digest
@@ -11,7 +11,7 @@ print("News Bot starting...")
 for topic, config in DIGEST_CONFIG.items():
     send_time = os.environ.get(f"SEND_TIME_{topic.upper()}", config["send_time"])
     print(f"  {topic}: daily at {send_time} UTC")
-    schedule.every().day.at(send_time).do(run_digest, topic)
+    schedule.every().day.at(send_time, timezone.utc).do(run_digest, topic)
 
 if os.environ.get("RUN_ON_START", "").lower() == "true":
     topic = os.environ.get("RUN_TOPIC", "")

@@ -3,25 +3,22 @@
 import json
 import os
 import re
+import smtplib
 import sqlite3
+import traceback
 import urllib.request
 import urllib.parse
-import base64
-import pickle
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from xml.etree import ElementTree as ET
-
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
 
 from feeds import FEEDS, DIGEST_CONFIG
 from scorer import score_articles_ai
 
 
 GMAIL_USER = os.environ.get("GMAIL_USER", "pasi.siitonen@gmail.com")
-GMAIL_TOKEN_PATH = os.environ.get("GMAIL_TOKEN_PATH", "/app/gmail_token.pickle")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 DB_PATH = os.environ.get("DB_PATH", "/app/news.db")
 
 
@@ -59,23 +56,12 @@ def cleanup_old(db, days=14):
     db.commit()
 
 
-# --- Gmail ---
-
-def _get_gmail_service():
-    creds = None
-    if os.path.exists(GMAIL_TOKEN_PATH):
-        with open(GMAIL_TOKEN_PATH, "rb") as f:
-            creds = pickle.load(f)
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(GMAIL_TOKEN_PATH, "wb") as f:
-            pickle.dump(creds, f)
-    if not creds or not creds.valid:
-        raise Exception(f"Gmail token invalid or missing at {GMAIL_TOKEN_PATH}")
-    return build("gmail", "v1", credentials=creds)
-
+# --- Email (SMTP) ---
 
 def send_email(html, subject, recipients):
+    if not GMAIL_APP_PASSWORD:
+        raise Exception("GMAIL_APP_PASSWORD not set")
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = GMAIL_USER
@@ -83,22 +69,10 @@ def send_email(html, subject, recipients):
     msg.attach(MIMEText("Open in HTML-capable email client.", "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    service = _get_gmail_service()
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    result = service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        server.sendmail(GMAIL_USER, recipients, msg.as_string())
     print(f"  Email sent to {len(recipients)} recipients")
-
-    # When sending to yourself, Gmail creates duplicate (Sent + Inbox).
-    # Remove INBOX label from the sent copy so only one appears.
-    if GMAIL_USER in recipients:
-        try:
-            msg_id = result["id"]
-            service.users().messages().modify(
-                userId="me", id=msg_id,
-                body={"removeLabelIds": ["INBOX"]}
-            ).execute()
-        except Exception:
-            pass
 
 
 # --- Feed Fetching ---
@@ -325,38 +299,42 @@ def run_digest(topic):
     config = DIGEST_CONFIG[topic]
     divider = chr(61) * 50
     print(divider)
-    print(f"Running {topic} digest...")
+    print(f"[{datetime.now(timezone.utc).isoformat()}] Running {topic} digest...")
     print(divider)
 
-    articles = fetch_all_articles(topic)
-    print(f"  Got {len(articles)} unique articles")
+    try:
+        articles = fetch_all_articles(topic)
+        print(f"  Got {len(articles)} unique articles")
 
-    if not articles:
-        print("  No articles found, skipping.")
-        return
+        if not articles:
+            print("  No articles found, skipping.")
+            return
 
-    db = get_db()
-    new_articles = []
-    for a in articles:
-        if not is_seen(db, a["link"]):
-            new_articles.append(a)
-            mark_seen(db, a["link"], a["title"])
-    db.close()
+        db = get_db()
+        new_articles = []
+        for a in articles:
+            if not is_seen(db, a["link"]):
+                new_articles.append(a)
+                mark_seen(db, a["link"], a["title"])
+        db.close()
 
-    print(f"  {len(new_articles)} new articles (after dedup)")
-    if not new_articles:
-        print("  All articles already sent, skipping.")
-        return
+        print(f"  {len(new_articles)} new articles (after dedup)")
+        if not new_articles:
+            print("  All articles already sent, skipping.")
+            return
 
-    scored = score_articles_ai(new_articles, topic)
+        scored = score_articles_ai(new_articles, topic)
 
-    html = build_html(scored, topic)
-    today = datetime.now().strftime("%B %d, %Y")
-    emoji = config.get("emoji", "")
-    digest_title = config.get("title", topic)
-    subject = emoji + " " + digest_title + " - " + today + " (" + str(len(scored)) + " stories)"
-    send_email(html, subject, config["recipients"])
-    print(f"  Done! Sent to {len(config.get("recipients", []))} recipients")
+        html = build_html(scored, topic)
+        today = datetime.now().strftime("%B %d, %Y")
+        emoji = config.get("emoji", "")
+        digest_title = config.get("title", topic)
+        subject = emoji + " " + digest_title + " - " + today + " (" + str(len(scored)) + " stories)"
+        send_email(html, subject, config["recipients"])
+        print(f"  Done! Sent to {len(config['recipients'])} recipients")
+    except Exception as e:
+        print(f"  ERROR in {topic} digest: {e}")
+        traceback.print_exc()
 
 
 def run():

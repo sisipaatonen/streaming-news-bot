@@ -1,9 +1,10 @@
 """Unified news bot - streaming + tech digests with AI scoring."""
 
+import base64
 import json
 import os
+import pickle
 import re
-import smtplib
 import sqlite3
 import traceback
 import urllib.request
@@ -18,7 +19,7 @@ from scorer import score_articles_ai
 
 
 GMAIL_USER = os.environ.get("GMAIL_USER", "pasi.siitonen@gmail.com")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+GMAIL_TOKEN_PATH = os.environ.get("GMAIL_TOKEN_PATH", "/app/gmail_token.pickle")
 DB_PATH = os.environ.get("DB_PATH", "/app/news.db")
 
 
@@ -56,11 +57,35 @@ def cleanup_old(db, days=14):
     db.commit()
 
 
-# --- Email (SMTP) ---
+# --- Gmail API (HTTPS, no SMTP needed) ---
+
+def _get_gmail_credentials():
+    """Load and refresh Gmail OAuth credentials."""
+    if not os.path.exists(GMAIL_TOKEN_PATH):
+        raise Exception(f"Gmail token not found at {GMAIL_TOKEN_PATH}")
+    with open(GMAIL_TOKEN_PATH, "rb") as f:
+        creds = pickle.load(f)
+    if creds.expired and creds.refresh_token:
+        # Refresh via HTTPS (works on Railway)
+        data = urllib.parse.urlencode({
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "refresh_token": creds.refresh_token,
+            "grant_type": "refresh_token"
+        }).encode()
+        req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_data = json.loads(resp.read())
+        creds.token = token_data["access_token"]
+        with open(GMAIL_TOKEN_PATH, "wb") as f:
+            pickle.dump(creds, f)
+    if not creds.token:
+        raise Exception("Gmail token has no access_token and could not refresh")
+    return creds
+
 
 def send_email(html, subject, recipients):
-    if not GMAIL_APP_PASSWORD:
-        raise Exception("GMAIL_APP_PASSWORD not set")
+    creds = _get_gmail_credentials()
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -69,10 +94,18 @@ def send_email(html, subject, recipients):
     msg.attach(MIMEText("Open in HTML-capable email client.", "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_USER, recipients, msg.as_string())
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    body = json.dumps({"raw": raw}).encode()
+    req = urllib.request.Request(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        data=body, method="POST",
+        headers={
+            "Authorization": f"Bearer {creds.token}",
+            "Content-Type": "application/json"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read())
     print(f"  Email sent to {len(recipients)} recipients")
 
 

@@ -3,6 +3,7 @@ import time
 import schedule
 from datetime import datetime, timezone
 
+import startup
 from bot import run_digest
 from feeds import DIGEST_CONFIG
 

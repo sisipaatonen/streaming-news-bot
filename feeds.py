@@ -54,6 +54,7 @@ DIGEST_CONFIG = {
             "pasi.siitonen@gmail.com",
             "olli.karikoski@mystaze.com",
             "joonas.palkonen@mystaze.com",
+            "bjorn.masalin@gmail.com",
         ],
         "send_time": "06:00",
         "category_order": ["music", "streaming", "sports", "entertainment", "tech"],

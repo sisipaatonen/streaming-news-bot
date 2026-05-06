@@ -30,8 +30,7 @@ deprioritized future-focus area.
 
 ## Feeds
 - Combat sports: MMA Fighting, MMA Junkie, Sherdog, Bloody Elbow, BoxingScene
-- Live streaming tech: Next TV, TV Tech, StreamTV Insider
+- Live streaming platforms & tech: Next TV, TV Tech, StreamTV Insider, The Verge, Ars Technica, VentureBeat
 - Sports streaming business: SportsPro Media
 - Entertainment streaming: Variety, Deadline, Hollywood Reporter
 - Music streaming (future focus): Music Business Worldwide, Music Ally
-- Tech (cross-listed): The Verge, Ars Technica, VentureBeat

@@ -1,6 +1,8 @@
 # Streaming News Bot
 
-Daily email digest of music streaming, sports streaming, live streaming, and streaming tech news.
+Daily email digest for myStaze. Primary focus: combat sports streaming (MMA, UFC, boxing) and the
+live streaming landscape (platforms, tech, rights deals). Music streaming is included as a
+deprioritized future-focus area.
 
 ## Setup
 
@@ -27,5 +29,9 @@ Daily email digest of music streaming, sports streaming, live streaming, and str
 - joonas.palkonen@mystaze.com
 
 ## Feeds
-10 RSS feeds covering: Music Business Worldwide, Music Ally, Variety, Deadline, 
-Hollywood Reporter, The Verge, TechCrunch, Next TV, TV Tech, SportsPro Media
+- Combat sports: MMA Fighting, MMA Junkie, Sherdog, Bloody Elbow, BoxingScene
+- Live streaming tech: Next TV, TV Tech, StreamTV Insider
+- Sports streaming business: SportsPro Media
+- Entertainment streaming: Variety, Deadline, Hollywood Reporter
+- Music streaming (future focus): Music Business Worldwide, Music Ally
+- Tech (cross-listed): The Verge, Ars Technica, VentureBeat

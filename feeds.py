@@ -1,28 +1,21 @@
 FEEDS = [
-    # Combat sports - PRIMARY FOCUS
-    {"name": "MMA Fighting", "url": "https://www.mmafighting.com/rss/index.xml", "category": "combat", "topics": ["streaming"]},
-    {"name": "MMA Junkie", "url": "https://mmajunkie.usatoday.com/feed", "category": "combat", "topics": ["streaming"]},
-    {"name": "Sherdog", "url": "https://www.sherdog.com/rss/news.xml", "category": "combat", "topics": ["streaming"]},
-    {"name": "Bloody Elbow", "url": "https://www.bloodyelbow.com/rss/index.xml", "category": "combat", "topics": ["streaming"]},
-    {"name": "BoxingScene", "url": "https://www.boxingscene.com/rss/news.xml", "category": "combat", "topics": ["streaming"]},
-
-    # Live streaming platforms & tech
+    # Live streaming platforms, tech, and trade press
+    {"name": "StreamTV Insider", "url": "https://www.streamtvinsider.com/rss/all", "category": "streaming", "topics": ["streaming"]},
     {"name": "Next TV", "url": "https://www.nexttv.com/rss.xml", "category": "streaming", "topics": ["streaming"]},
     {"name": "TV Tech", "url": "https://www.tvtechnology.com/rss.xml", "category": "streaming", "topics": ["streaming"]},
-    {"name": "StreamTV Insider", "url": "https://www.streamtvinsider.com/rss/all", "category": "streaming", "topics": ["streaming"]},
     {"name": "The Verge", "url": "https://www.theverge.com/rss/index.xml", "category": "streaming", "topics": ["streaming"]},
-    {"name": "Ars Technica", "url": "https://feeds.arstechnica.com/arstechnica/index", "category": "streaming", "topics": ["streaming"]},
-    {"name": "Venture Beat", "url": "https://venturebeat.com/feed/", "category": "streaming", "topics": ["streaming"]},
 
-    # Sports streaming & business
+    # Sports streaming & broadcasting (rights, platforms, distribution - NOT match results)
     {"name": "SportsPro Media", "url": "https://www.sportspromedia.com/feed/", "category": "sports", "topics": ["streaming"]},
+    {"name": "Awful Announcing", "url": "https://awfulannouncing.com/feed", "category": "sports", "topics": ["streaming"]},
 
-    # Entertainment streaming (context)
+    # TV/film streaming (context for the broader live distribution landscape)
     {"name": "Variety", "url": "https://variety.com/feed/", "category": "entertainment", "topics": ["streaming"]},
     {"name": "Deadline", "url": "https://deadline.com/feed/", "category": "entertainment", "topics": ["streaming"]},
     {"name": "Hollywood Reporter", "url": "https://www.hollywoodreporter.com/feed/", "category": "entertainment", "topics": ["streaming"]},
 
-    # Music streaming - future focus, deprioritized
+    # Live music & performing arts streaming
+    {"name": "Pollstar", "url": "https://www.pollstar.com/feed/", "category": "music", "topics": ["streaming"]},
     {"name": "Music Business Worldwide", "url": "https://www.musicbusinessworldwide.com/feed/", "category": "music", "topics": ["streaming"]},
     {"name": "Music Ally", "url": "https://musically.com/feed/", "category": "music", "topics": ["streaming"]},
 ]
@@ -30,30 +23,34 @@ FEEDS = [
 
 # Interest profiles for AI scoring per topic
 INTEREST_PROFILES = {
-    "streaming": """PRIMARY FOCUS: Combat sports streaming and broadcasting.
-- MMA, UFC, Bellator, ONE Championship, PFL, kickboxing, K-1, Glory, professional boxing, BJJ and grappling.
-- Combat sports broadcast rights, PPV deals, streaming platform exclusives, fighter pay, promotion business.
-- Combat sports streaming platforms: UFC Fight Pass, DAZN, ESPN+, Triller, Fanatiq, Fight Network.
+    "streaming": """We are myStaze, a live streaming platform. Our interest is the LIVE STREAMING and BROADCASTING industry - how live content is distributed, monetized, and consumed.
 
-SECONDARY FOCUS: Live streaming landscape - technology, platforms, business models.
-- Live streaming infrastructure: low-latency protocols (LL-HLS, WebRTC, CMAF), CDN, encoding, transcoding.
-- Live streaming platforms, OTT services, D2C launches, FAST channels.
-- Sports streaming rights deals and broadcast distribution globally.
-- PPV vs subscription vs ad-supported live, monetization, audience metrics.
+HIGH-VALUE TOPICS (score 8-10):
+- Live streaming platforms: YouTube Live, Twitch, Kick, ESPN+, DAZN, UFC Fight Pass, NBA League Pass, MLB.tv, Disney+ live events, Amazon Prime Video live, Paramount+ live, Netflix live, Triller, FloSports, Stage+, Boiler Room, Veeps. Platform launches, feature changes, monetization changes, exits, M&A.
+- Broadcast and streaming RIGHTS DEALS: who wins what, fees, exclusivity, geographic splits, length of deal, sub-licensing.
+- Live streaming TECHNOLOGY: low-latency protocols (LL-HLS, WebRTC, CMAF), encoding, transcoding, CDN, DRM, server-side ad insertion, multi-angle, interactive features, AI in live production, captions/translation.
+- Live SPORTS broadcasting and streaming distribution across NFL, NBA, MLB, NHL, EPL, UEFA, F1, UFC, boxing PPVs, ONE Championship, PFL, etc.
+- Live MUSIC streaming: concerts, festivals, DJ sets and shows on Twitch/YouTube, paid livestream concerts, virtual concerts, livestream tours.
+- Live PERFORMING ARTS streaming: theatre, opera, comedy specials, livestreamed events.
+- Creator economy as it touches live streaming.
 
-CONTEXT: General entertainment streaming (Netflix, Disney+, HBO, Amazon Prime) - only relevant when it informs live streaming or sports rights.
+PREFERRED VERTICAL: combat sports (UFC, MMA, boxing, kickboxing) - but ONLY when the article is about broadcasting, streaming, rights, platforms, distribution, or business. Score these high when relevant.
 
-FUTURE INTEREST (lower priority): Music streaming and live music streaming - relevant but not the main focus.
+DO NOT SCORE HIGH (score 1-3):
+- Fight cards, fight previews, fighter rankings, tournament/event results, fighter signings/releases, drug tests, retirements, injury updates, weigh-ins.
+- Match recaps, team standings, transfer news, player stats, game previews with no broadcasting/distribution angle.
+- On-demand recorded music streaming (Spotify, Apple Music, Tidal product/business news) UNLESS it is about live audio, concerts, or live distribution.
+- TV/film streaming product news (Netflix subscriber numbers, show cancellations, on-demand catalogue moves) UNLESS it intersects with live distribution or sports rights.
 
-myStaze is a live streaming platform currently focused on combat sports, with future plans to expand into music.""",
+A useful test: would this article help us understand how live content is distributed, priced, or technically delivered? If yes, score high. If it is about who fought whom, who won, or what someone released on Spotify, score low.""",
 }
 
 
 # Digest configuration per topic
 DIGEST_CONFIG = {
     "streaming": {
-        "title": "Combat Sports & Live Streaming Daily",
-        "emoji": "🥊",
+        "title": "Live Streaming & Broadcasting Daily",
+        "emoji": "📡",
         "recipients": [
             "pasi.siitonen@gmail.com",
             "olli.karikoski@mystaze.com",
@@ -61,13 +58,12 @@ DIGEST_CONFIG = {
             "bjorn.masalin@gmail.com",
         ],
         "send_time": "06:00",
-        "category_order": ["combat", "streaming", "sports", "entertainment", "music"],
+        "category_order": ["streaming", "sports", "entertainment", "music"],
         "category_labels": {
-            "combat": "🥊 Combat Sports",
             "streaming": "📺 Live Streaming Platforms & Tech",
-            "sports": "🏆 Sports Streaming & Business",
-            "entertainment": "🎬 Entertainment Streaming",
-            "music": "🎵 Music Streaming (Future)",
+            "sports": "🏆 Sports Streaming & Broadcasting",
+            "entertainment": "🎬 TV & Film Streaming",
+            "music": "🎵 Live Music & Performing Arts",
         },
     },
 }

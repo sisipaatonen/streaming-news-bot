@@ -56,6 +56,8 @@ DIGEST_CONFIG = {
             "olli.karikoski@mystaze.com",
             "joonas.palkonen@mystaze.com",
             "bjorn.masalin@gmail.com",
+            "sarah@wavelength.now",
+            "al@extremeinternational.com",
         ],
         "send_time": "06:00",
         "category_order": ["streaming", "sports", "entertainment", "music"],

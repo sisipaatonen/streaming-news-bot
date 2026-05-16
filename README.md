@@ -31,7 +31,20 @@ angle* — not fight cards or rankings.
 - joonas.palkonen@mystaze.com
 
 ## Feeds
-- Live streaming platforms & tech: StreamTV Insider, Next TV, TV Tech, The Verge
-- Sports streaming & broadcasting: SportsPro Media, Awful Announcing
-- TV/film streaming (context): Variety, Deadline, Hollywood Reporter
-- Live music & performing arts: Pollstar, Music Business Worldwide, Music Ally
+Global coverage across the live-streaming umbrella: platforms & broadcast tech,
+sports rights, creator/Twitch/esports, gambling, live music, TV/film.
+
+- **Platforms & broadcast tech (global):** StreamTV Insider, Next TV, TV Tech,
+  The Verge, Digital TV Europe, Broadband TV News, Advanced Television,
+  Rapid TV News, TBI Vision, IBC365, Mumbrella (APAC)
+- **Sports streaming & broadcasting (international):** SportsPro Media,
+  SportBusiness, Inside the Games, World Soccer Talk, Sport Industry Group,
+  Front Office Sports, Awful Announcing
+- **Twitch / creators / esports / short-form:** Tubefilter, Dexerto,
+  Esports Insider, The Esports Advocate, Social Media Today, Digiday
+- **Gambling & sports betting:** SBC News, iGaming Business,
+  Legal Sports Report, Gambling Insider
+- **Live music & performing arts:** Pollstar, Music Business Worldwide,
+  Music Ally, IQ Magazine, Hypebot
+- **TV/film streaming (context):** Variety, Deadline, Hollywood Reporter,
+  Screen Daily, Broadcast Now (UK)

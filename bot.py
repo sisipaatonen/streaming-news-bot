@@ -1,4 +1,4 @@
-"""Unified news bot - streaming + tech digests with AI scoring."""
+"""News bot - live streaming digest with keyword pre-filter + AI scoring."""
 
 import base64
 import json
@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from xml.etree import ElementTree as ET
 
-from feeds import FEEDS, DIGEST_CONFIG
+from feeds import FEEDS, DIGEST_CONFIG, STREAMING_KEYWORDS, NEGATIVE_KEYWORDS
 from scorer import score_articles_ai
 
 
@@ -66,7 +66,6 @@ def _get_gmail_credentials():
     with open(GMAIL_TOKEN_PATH, "rb") as f:
         creds = pickle.load(f)
     if creds.expired and creds.refresh_token:
-        # Refresh via HTTPS (works on Railway)
         data = urllib.parse.urlencode({
             "client_id": creds.client_id,
             "client_secret": creds.client_secret,
@@ -115,9 +114,9 @@ def send_email(html, subject, recipients):
 def _is_recent(pub_dt, cutoff):
     if pub_dt is None:
         return True
-    # Return True if article is newer than cutoff
     diff = pub_dt.timestamp() - cutoff.timestamp()
     return diff == abs(diff)
+
 
 def fetch_feed(feed):
     try:
@@ -128,7 +127,7 @@ def fetch_feed(feed):
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.read().decode("utf-8", errors="ignore")
     except Exception as e:
-        print(f"  Failed {feed.get("name")}: {e}")
+        print(f"  Failed {feed.get('name')}: {e}")
         return None
 
 
@@ -139,7 +138,7 @@ def parse_feed(xml_content, feed):
         ns = {"atom": "http://www.w3.org/2005/Atom"}
         items = root.findall(".//item") or root.findall(".//atom:entry", ns) or root.findall(".//entry")
 
-        for item in items[:20]:
+        for item in items[:25]:
             def get(tag, attr=None):
                 for t in [tag, f"atom:{tag}"]:
                     el = item.find(t, ns)
@@ -160,11 +159,9 @@ def parse_feed(xml_content, feed):
             description = get("description") or get("summary") or get("content")
             pub_date = get("pubDate") or get("published") or get("updated")
 
-            # Strip HTML
             description = re.sub(r"" + chr(60) + "[^" + chr(62) + "]+" + chr(62), " ", description or "")
-            description = re.sub(r"\s+", " ", description).strip()[:300]
+            description = re.sub(r"\s+", " ", description).strip()[:400]
 
-            # Parse date
             pub_dt = None
             for fmt in [
                 "%a, %d %b %Y %H:%M:%S %z",
@@ -188,23 +185,20 @@ def parse_feed(xml_content, feed):
                     "description": description,
                     "pub_dt": pub_dt,
                     "source": feed["name"],
-                    "category": feed["category"],
-                    "topics": feed.get("topics", []),
                 })
     except ET.ParseError as e:
         print(f"  XML parse error: {e}")
     return articles
 
 
-def fetch_all_articles(topic):
+def fetch_all_articles():
     all_articles = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
 
-    topic_feeds = [f for f in FEEDS if topic in f.get("topics", [])]
-    print(f"  Fetching {len(topic_feeds)} feeds for topic: {topic}")
+    print(f"  Fetching {len(FEEDS)} feeds")
 
-    for feed in topic_feeds:
-        print(f"    {feed.get("name")}...")
+    for feed in FEEDS:
+        print(f"    {feed.get('name')}...")
         xml = fetch_feed(feed)
         if not xml:
             continue
@@ -213,7 +207,6 @@ def fetch_all_articles(topic):
             if _is_recent(a.get("pub_dt"), cutoff):
                 all_articles.append(a)
 
-    # Deduplicate by title
     seen_titles = set()
     unique = []
     for a in all_articles:
@@ -225,57 +218,94 @@ def fetch_all_articles(topic):
     return unique
 
 
-def build_html(articles, topic):
-    config = DIGEST_CONFIG[topic]
+# --- Keyword pre-filter ---
+
+
+def compute_keyword_score(article):
+    """Score article 0+ on streaming relevance via weighted keywords.
+
+    Title matches count double. Negative keywords subtract 8 each. Returns
+    (score, matched_keywords).
+    """
+    title = (article.get("title") or "").lower()
+    desc = (article.get("description") or "").lower()
+    haystack = " " + title + " " + desc + " "
+    title_pad = " " + title + " "
+
+    score = 0
+    matched = []
+    for weight, keywords in STREAMING_KEYWORDS.items():
+        for kw in keywords:
+            in_title = kw in title_pad
+            in_desc = (not in_title) and (kw in haystack)
+            if in_title:
+                score += weight * 2
+                matched.append(kw)
+            elif in_desc:
+                score += weight
+                matched.append(kw)
+
+    for neg in NEGATIVE_KEYWORDS:
+        if neg in haystack:
+            score -= 8
+
+    return score, matched
+
+
+def keyword_prefilter(articles, threshold, limit):
+    """Annotate articles with keyword_score, drop below threshold, keep top `limit`."""
+    for a in articles:
+        s, m = compute_keyword_score(a)
+        a["keyword_score"] = s
+        a["keyword_matches"] = m
+
+    survivors = [a for a in articles if a["keyword_score"] >= threshold]
+    survivors.sort(key=lambda x: x["keyword_score"], reverse=True)
+    return survivors[:limit]
+
+
+# --- HTML rendering ---
+
+
+def build_html(articles, config):
     today = datetime.now().strftime("%A, %B %d %Y")
     LT = chr(60)
     GT = chr(62)
     NL = chr(10)
+    Q = chr(34)
 
-    by_category = {}
-    for a in articles[:40]:
-        cat = a["category"]
-        by_category.setdefault(cat, []).append(a)
-
-    sections_html = ""
-    for cat in config["category_order"]:
-        items = by_category.get(cat, [])
-        if not items:
-            continue
-        label = config["category_labels"].get(cat, cat.title())
-        items_html = ""
-        for a in items[:10]:
-            ai = a.get("ai_score", 0)
-            fire = chr(128293) if ai not in range(0, 8) else chr(11088) if ai not in range(0, 6) else ""
-            pub_str = ""
-            if a["pub_dt"]:
-                pub_str = a["pub_dt"].strftime("%b %d, %H:%M UTC")
-            reason = a.get("ai_reason", "")
-            score_badge = ""
-            if ai and ai != 5:
-                score_badge = f" [{ai}/10]"
-            items_html += (
-                LT + "div class=" + chr(34) + "article" + chr(34) + GT + NL +
-                LT + "div class=" + chr(34) + "article-meta" + chr(34) + GT + NL +
-                LT + "span class=" + chr(34) + "source" + chr(34) + GT + a["source"] + LT + "/span" + GT + NL +
-                LT + "span class=" + chr(34) + "date" + chr(34) + GT + pub_str + LT + "/span" + GT + NL +
-                (LT + "span class=" + chr(34) + "hot" + chr(34) + GT + fire + LT + "/span" + GT + NL if fire else "") +
-                LT + "/div" + GT + NL +
-                LT + "a href=" + chr(34) + a["link"] + chr(34) + " class=" + chr(34) + "article-title" + chr(34) + GT + a["title"] + score_badge + LT + "/a" + GT + NL +
-                (LT + "p class=" + chr(34) + "article-desc" + chr(34) + GT + reason + LT + "/p" + GT + NL if reason else "") +
-                LT + "/div" + GT + NL
-            )
-        sections_html += (
-            LT + "div class=" + chr(34) + "section" + chr(34) + GT + NL +
-            LT + "div class=" + chr(34) + "section-title" + chr(34) + GT + label + LT + "/div" + GT + NL +
-            items_html +
+    items_html = ""
+    for a in articles:
+        ai = a.get("ai_score", 0)
+        if ai >= 8:
+            fire = chr(128293)
+        elif ai >= 6:
+            fire = chr(11088)
+        else:
+            fire = ""
+        pub_str = ""
+        if a.get("pub_dt"):
+            pub_str = a["pub_dt"].strftime("%b %d, %H:%M UTC")
+        summary = a.get("ai_summary", "") or ""
+        fit = a.get("ai_fit", "") or ""
+        score_badge = f" [{ai}/10]" if ai else ""
+        items_html += (
+            LT + "div class=" + Q + "article" + Q + GT + NL +
+            LT + "div class=" + Q + "article-meta" + Q + GT + NL +
+            LT + "span class=" + Q + "source" + Q + GT + a["source"] + LT + "/span" + GT + NL +
+            LT + "span class=" + Q + "date" + Q + GT + pub_str + LT + "/span" + GT + NL +
+            (LT + "span class=" + Q + "hot" + Q + GT + fire + LT + "/span" + GT + NL if fire else "") +
+            LT + "/div" + GT + NL +
+            LT + "a href=" + Q + a["link"] + Q + " class=" + Q + "article-title" + Q + GT + a["title"] + score_badge + LT + "/a" + GT + NL +
+            (LT + "p class=" + Q + "article-summary" + Q + GT + summary + LT + "/p" + GT + NL if summary else "") +
+            (LT + "p class=" + Q + "article-fit" + Q + GT + LT + "strong" + GT + "Why it fits: " + LT + "/strong" + GT + fit + LT + "/p" + GT + NL if fit else "") +
             LT + "/div" + GT + NL
         )
 
-    return _html_wrapper(today, config, sections_html, len(articles))
+    return _html_wrapper(today, config, items_html, len(articles))
 
 
-def _html_wrapper(today, config, sections_html, article_count):
+def _html_wrapper(today, config, items_html, article_count):
     LT = chr(60)
     GT = chr(62)
     NL = chr(10)
@@ -295,10 +325,10 @@ def _html_wrapper(today, config, sections_html, article_count):
         LT + "div class=" + Q + "header" + Q + GT + NL +
         LT + "h1" + GT + title + LT + "/h1" + GT + NL +
         LT + "div class=" + Q + "date" + Q + GT + today + LT + "/div" + GT + NL +
-        LT + "span class=" + Q + "badge" + Q + GT + str(article_count) + " articles - AI-scored" + LT + "/span" + GT + NL +
+        LT + "span class=" + Q + "badge" + Q + GT + str(article_count) + " stories - keyword-filtered, AI-scored" + LT + "/span" + GT + NL +
         LT + "/div" + GT + NL +
         LT + "div class=" + Q + "content" + Q + GT + NL +
-        sections_html +
+        items_html +
         LT + "/div" + GT + NL +
         LT + "div class=" + Q + "footer" + Q + GT + "Powered by Nexus AI" + LT + "/div" + GT + NL +
         LT + "/body" + GT + NL +
@@ -315,15 +345,15 @@ def _get_css(SC, NL):
         ".header h1 { margin: 0" + s + " font-size: 28px" + s + " }",
         ".header .date { color: #8888aa" + s + " margin-top: 8px" + s + " font-size: 14px" + s + " }",
         ".badge { display: inline-block" + s + " background: rgba(124,109,250,0.2)" + s + " border: 1px solid rgba(124,109,250,0.4)" + s + " color: #7c6dfa" + s + " padding: 4px 14px" + s + " border-radius: 20px" + s + " font-size: 12px" + s + " margin-top: 12px" + s + " }",
-        ".content { max-width: 700px" + s + " margin: 0 auto" + s + " padding: 24px 16px" + s + " }",
-        ".section { margin-bottom: 36px" + s + " }",
-        ".section-title { font-size: 16px" + s + " font-weight: 700" + s + " text-transform: uppercase" + s + " color: #4fd1c5" + s + " border-bottom: 1px solid #2e2e42" + s + " padding-bottom: 10px" + s + " margin-bottom: 16px" + s + " }",
+        ".content { max-width: 720px" + s + " margin: 0 auto" + s + " padding: 24px 16px" + s + " }",
         ".article { background: #1a1a24" + s + " border: 1px solid #2e2e42" + s + " border-radius: 10px" + s + " padding: 16px 18px" + s + " margin-bottom: 12px" + s + " }",
         ".article-meta { display: flex" + s + " align-items: center" + s + " gap: 10px" + s + " margin-bottom: 8px" + s + " }",
         ".source { font-size: 11px" + s + " font-weight: 700" + s + " text-transform: uppercase" + s + " color: #7c6dfa" + s + " }",
         ".date { font-size: 11px" + s + " color: #8888aa" + s + " }",
         ".article-title { color: #e8e8f0" + s + " font-size: 15px" + s + " font-weight: 600" + s + " text-decoration: none" + s + " display: block" + s + " }",
-        ".article-desc { margin: 8px 0 0" + s + " font-size: 13px" + s + " color: #9999bb" + s + " }",
+        ".article-summary { margin: 8px 0 0" + s + " font-size: 13px" + s + " color: #c8c8dd" + s + " line-height: 1.45" + s + " }",
+        ".article-fit { margin: 6px 0 0" + s + " font-size: 12px" + s + " color: #9999bb" + s + " font-style: italic" + s + " }",
+        ".article-fit strong { color: #4fd1c5" + s + " font-style: normal" + s + " }",
         ".footer { text-align: center" + s + " padding: 24px" + s + " color: #8888aa" + s + " font-size: 12px" + s + " border-top: 1px solid #2e2e42" + s + " }",
     ]
     return NL.join(rules)
@@ -337,7 +367,7 @@ def run_digest(topic):
     print(divider)
 
     try:
-        articles = fetch_all_articles(topic)
+        articles = fetch_all_articles()
         print(f"  Got {len(articles)} unique articles")
 
         if not articles:
@@ -357,13 +387,29 @@ def run_digest(topic):
             print("  All articles already sent, skipping.")
             return
 
-        scored = score_articles_ai(new_articles, topic)
+        threshold = config.get("keyword_threshold", 4)
+        ai_limit = config.get("ai_score_limit", 80)
+        candidates = keyword_prefilter(new_articles, threshold, ai_limit)
+        print(f"  {len(candidates)} candidates after keyword filter (threshold={threshold})")
+        if not candidates:
+            print("  No candidates passed keyword filter, skipping.")
+            return
 
-        html = build_html(scored, topic)
+        scored = score_articles_ai(candidates)
+
+        ai_min = config.get("ai_min_score", 5)
+        digest_limit = config.get("digest_limit", 30)
+        final = [a for a in scored if a.get("ai_score", 0) >= ai_min][:digest_limit]
+        print(f"  {len(final)} stories in final digest (ai_min={ai_min})")
+        if not final:
+            print("  No stories passed AI score floor, skipping.")
+            return
+
+        html = build_html(final, config)
         today = datetime.now().strftime("%B %d, %Y")
         emoji = config.get("emoji", "")
         digest_title = config.get("title", topic)
-        subject = emoji + " " + digest_title + " - " + today + " (" + str(len(scored)) + " stories)"
+        subject = emoji + " " + digest_title + " - " + today + " (" + str(len(final)) + " stories)"
         send_email(html, subject, config["recipients"])
         print(f"  Done! Sent to {len(config['recipients'])} recipients")
     except Exception as e:

@@ -157,6 +157,15 @@ NEGATIVE_KEYWORDS = [
 ]
 
 
+# Hard-block patterns on the HEADLINE only. If every token in a tuple appears in
+# the title (case-insensitive substring match), the article is dropped outright
+# regardless of keyword score. Use this for clickbait/promo patterns where each
+# word alone would have too many false positives.
+TITLE_BLOCKLIST = [
+    ("watch", "for free"),
+]
+
+
 INTEREST_PROFILE = """We are myStaze, a live streaming platform. We care about the LIVE STREAMING and BROADCASTING industry - how live content is distributed, monetized, and consumed.
 
 HIGH-VALUE (8-10):

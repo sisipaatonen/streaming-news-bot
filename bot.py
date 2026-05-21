@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from xml.etree import ElementTree as ET
 
-from feeds import FEEDS, DIGEST_CONFIG, STREAMING_KEYWORDS, NEGATIVE_KEYWORDS
+from feeds import FEEDS, DIGEST_CONFIG, STREAMING_KEYWORDS, NEGATIVE_KEYWORDS, TITLE_BLOCKLIST
 from scorer import score_articles_ai
 
 
@@ -252,12 +252,29 @@ def compute_keyword_score(article):
     return score, matched
 
 
+def is_title_blocked(article):
+    """True if the headline matches any TITLE_BLOCKLIST combo (all tokens present)."""
+    title = (article.get("title") or "").lower()
+    for combo in TITLE_BLOCKLIST:
+        if all(token in title for token in combo):
+            return True
+    return False
+
+
 def keyword_prefilter(articles, threshold, limit):
     """Annotate articles with keyword_score, drop below threshold, keep top `limit`."""
+    blocked = 0
     for a in articles:
+        if is_title_blocked(a):
+            a["keyword_score"] = -1000
+            a["keyword_matches"] = ["BLOCKED: title pattern"]
+            blocked += 1
+            continue
         s, m = compute_keyword_score(a)
         a["keyword_score"] = s
         a["keyword_matches"] = m
+    if blocked:
+        print(f"  {blocked} articles hard-blocked by title pattern")
 
     survivors = [a for a in articles if a["keyword_score"] >= threshold]
     survivors.sort(key=lambda x: x["keyword_score"], reverse=True)

@@ -194,12 +194,12 @@ DIGEST_CONFIG = {
             "al@extremeinternational.com",
         ],
         # Keyword pre-filter: minimum keyword score to be passed to AI.
-        "keyword_threshold": 4,
+        "keyword_threshold": 2,
         # Cap on articles sent to AI per run (top N by keyword score).
-        "ai_score_limit": 80,
+        "ai_score_limit": 120,
         # Cap on articles included in the final digest (top N by AI score).
-        "digest_limit": 30,
+        "digest_limit": 40,
         # AI must score >= this for an article to appear in the digest.
-        "ai_min_score": 5,
+        "ai_min_score": 4,
     },
 }

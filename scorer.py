@@ -46,13 +46,16 @@ def build_scoring_prompt(articles, interests):
 
     prompt = (
         "You are a news relevance scorer for a live-streaming-industry digest. "
+        "Be generous: this digest is meant to be a broad daily read about the streaming, "
+        "broadcasting, video, and creator economy world. When in doubt, include." + NL + NL +
         "For each article, return a score, a short factual summary, and a one-line note on why it fits (or doesn't)." + NL + NL +
         "USER INTERESTS:" + NL + interests + NL + NL +
         "SCORING GUIDE:" + NL +
         "- 9-10: Directly about live streaming, broadcasting rights, live platforms, or live distribution tech." + NL +
-        "- 7-8: Strongly related - a major adjacent platform/business move that clearly touches live distribution." + NL +
-        "- 4-6: Tangentially related - touches video/streaming but mostly on-demand or non-live." + NL +
-        "- 1-3: Not relevant to live streaming/broadcasting." + NL + NL +
+        "- 7-8: Strongly related - major streaming/video platform news, rights deal, or creator-economy move that touches live distribution." + NL +
+        "- 5-6: Reasonably related - video/streaming/broadcast business, ad tech, CTV, sports media business, live music industry. Borderline on-demand SVOD news that affects the live distribution landscape." + NL +
+        "- 3-4: Tangentially related - mentions a streaming platform but is mostly about a show plot, an on-demand music release, or a gadget." + NL +
+        "- 1-2: Not relevant (pure on-demand music recaps, fight cards, gadget reviews, generic consumer deals)." + NL + NL +
         "Respond with ONLY a JSON object: {\"articles\": [...]}. Each element must have:" + NL +
         "- index: the article number (integer)" + NL +
         "- score: integer 1-10" + NL +

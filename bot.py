@@ -397,8 +397,13 @@ def run_digest(topic):
 
         scored = score_articles_ai(candidates)
 
-        ai_min = config.get("ai_min_score", 5)
-        digest_limit = config.get("digest_limit", 30)
+        hist = {}
+        for a in scored:
+            hist[a.get("ai_score", 0)] = hist.get(a.get("ai_score", 0), 0) + 1
+        print(f"  AI score histogram: {dict(sorted(hist.items(), reverse=True))}")
+
+        ai_min = config.get("ai_min_score", 4)
+        digest_limit = config.get("digest_limit", 40)
         final = [a for a in scored if a.get("ai_score", 0) >= ai_min][:digest_limit]
         print(f"  {len(final)} stories in final digest (ai_min={ai_min})")
         if not final:

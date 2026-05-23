@@ -1,4 +1,4 @@
-"""News bot - live streaming digest with keyword pre-filter + AI scoring."""
+"""News bot - multi-category digest with keyword pre-filter + AI scoring."""
 
 import base64
 import json
@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from xml.etree import ElementTree as ET
 
-from feeds import FEEDS, DIGEST_CONFIG, STREAMING_KEYWORDS, NEGATIVE_KEYWORDS, TITLE_BLOCKLIST
+from feeds import FEEDS, DIGEST_CONFIG, TITLE_BLOCKLIST
 from scorer import score_articles_ai
 
 
@@ -191,6 +191,73 @@ def parse_feed(xml_content, feed):
     return articles
 
 
+# --- Cross-source dedup -----------------------------------------------------
+
+# Stopwords stripped before comparing titles. We only keep "significant"
+# tokens, which makes Jaccard overlap a reasonable proxy for "same story".
+_STOPWORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "of", "in", "on", "at", "to", "for", "with", "and", "or", "but", "as",
+    "by", "from", "this", "that", "these", "those", "it", "its",
+    "his", "her", "their", "your", "our", "we", "you", "they",
+    "has", "have", "had", "will", "would", "could", "should",
+    "into", "out", "up", "down", "over", "under", "now", "more",
+    "than", "then", "if", "so", "what", "how", "why", "when",
+    "new", "says", "said", "year", "still", "just", "amid",
+    "after", "before", "about", "against", "between", "through",
+    "here", "there", "report", "reports", "reportedly",
+}
+
+
+def _title_tokens(title):
+    """Set of normalized tokens, length>=3, stopwords removed."""
+    s = re.sub(r"[^a-z0-9 ]", " ", (title or "").lower())
+    return {t for t in s.split() if len(t) >= 3 and t not in _STOPWORDS}
+
+
+def _is_dup_of_any(tokens, seen_token_sets, min_overlap=3, min_share=0.6, jaccard=0.55):
+    """True if `tokens` looks like a near-duplicate of any previously seen set.
+
+    Two ways to flag a duplicate:
+      - >=`min_overlap` shared tokens AND >=`min_share` of the smaller title's
+        tokens overlap (catches "Apple Vision Pro" / "Vision Pro from Apple"-
+        style rewrites where outlets shuffle word order).
+      - Or Jaccard >=`jaccard` across the union (catches longer near-matches).
+    """
+    if len(tokens) < 3:
+        return False
+    for prev in seen_token_sets:
+        if len(prev) < 3:
+            continue
+        overlap = tokens & prev
+        if len(overlap) < min_overlap:
+            continue
+        smaller = min(len(tokens), len(prev))
+        if smaller and len(overlap) / smaller >= min_share:
+            return True
+        union = tokens | prev
+        if union and len(overlap) / len(union) >= jaccard:
+            return True
+    return False
+
+
+def _dedup_by_title(articles):
+    """Drop near-duplicates across sources via Jaccard overlap on significant tokens."""
+    seen_sets = []
+    unique = []
+    dropped = 0
+    for a in articles:
+        toks = _title_tokens(a["title"])
+        if _is_dup_of_any(toks, seen_sets):
+            dropped += 1
+            continue
+        seen_sets.append(toks)
+        unique.append(a)
+    if dropped:
+        print(f"  Dropped {dropped} cross-source duplicate(s)")
+    return unique
+
+
 def fetch_all_articles():
     all_articles = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
@@ -207,24 +274,22 @@ def fetch_all_articles():
             if _is_recent(a.get("pub_dt"), cutoff):
                 all_articles.append(a)
 
-    seen_titles = set()
-    unique = []
-    for a in all_articles:
-        key = re.sub(r"[^a-z0-9]", "", a["title"].lower())[:40]
-        if key not in seen_titles:
-            seen_titles.add(key)
-            unique.append(a)
-
-    return unique
+    # Sort newest first before dedup so we keep the freshest copy of any
+    # story that appears in multiple outlets.
+    all_articles.sort(
+        key=lambda a: a["pub_dt"] or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return _dedup_by_title(all_articles)
 
 
 # --- Keyword pre-filter ---
 
 
-def compute_keyword_score(article):
-    """Score article 0+ on streaming relevance via weighted keywords.
+def compute_keyword_score(article, keywords, negative_keywords):
+    """Score article 0+ on relevance via weighted keywords.
 
-    Title matches count double. Negative keywords subtract 8 each. Returns
+    Title matches count double. Each negative keyword subtracts 8. Returns
     (score, matched_keywords).
     """
     title = (article.get("title") or "").lower()
@@ -234,8 +299,8 @@ def compute_keyword_score(article):
 
     score = 0
     matched = []
-    for weight, keywords in STREAMING_KEYWORDS.items():
-        for kw in keywords:
+    for weight, kws in keywords.items():
+        for kw in kws:
             in_title = kw in title_pad
             in_desc = (not in_title) and (kw in haystack)
             if in_title:
@@ -245,7 +310,7 @@ def compute_keyword_score(article):
                 score += weight
                 matched.append(kw)
 
-    for neg in NEGATIVE_KEYWORDS:
+    for neg in negative_keywords:
         if neg in haystack:
             score -= 8
 
@@ -261,68 +326,115 @@ def is_title_blocked(article):
     return False
 
 
-def keyword_prefilter(articles, threshold, limit):
-    """Annotate articles with keyword_score, drop below threshold, keep top `limit`."""
-    blocked = 0
-    for a in articles:
-        if is_title_blocked(a):
-            a["keyword_score"] = -1000
-            a["keyword_matches"] = ["BLOCKED: title pattern"]
-            blocked += 1
-            continue
-        s, m = compute_keyword_score(a)
+# --- Per-category pipeline --------------------------------------------------
+
+
+def process_category(articles, cat):
+    """Filter, AI-score, and rank articles for one category section."""
+    sources = cat["sources"]
+    pool = [a for a in articles if a["source"] in sources]
+    pool = [a for a in pool if not is_title_blocked(a)]
+
+    keywords = cat["keywords"]
+    neg_kws = cat.get("negative_keywords", [])
+    threshold = cat.get("keyword_threshold", 2)
+    ai_limit = cat.get("ai_score_limit", 120)
+
+    for a in pool:
+        s, m = compute_keyword_score(a, keywords, neg_kws)
         a["keyword_score"] = s
         a["keyword_matches"] = m
-    if blocked:
-        print(f"  {blocked} articles hard-blocked by title pattern")
 
-    survivors = [a for a in articles if a["keyword_score"] >= threshold]
+    survivors = [a for a in pool if a["keyword_score"] >= threshold]
     survivors.sort(key=lambda x: x["keyword_score"], reverse=True)
-    return survivors[:limit]
+    candidates = survivors[:ai_limit]
+
+    print(f"  [{cat['key']}] {len(pool)} eligible, {len(candidates)} pass keyword filter (threshold={threshold})")
+    if not candidates:
+        return []
+
+    scored = score_articles_ai(candidates, cat["interest_profile"])
+
+    hist = {}
+    for a in scored:
+        hist[a.get("ai_score", 0)] = hist.get(a.get("ai_score", 0), 0) + 1
+    print(f"  [{cat['key']}] AI score histogram: {dict(sorted(hist.items(), reverse=True))}")
+
+    ai_min = cat.get("ai_min_score", 4)
+    digest_limit = cat.get("digest_limit", 25)
+    final = [a for a in scored if a.get("ai_score", 0) >= ai_min][:digest_limit]
+    print(f"  [{cat['key']}] {len(final)} stories in section (ai_min={ai_min})")
+    return final
 
 
-# --- HTML rendering ---
+# --- HTML rendering ---------------------------------------------------------
 
 
-def build_html(articles, config):
+def _render_article(a):
+    LT = chr(60)
+    GT = chr(62)
+    NL = chr(10)
+    Q = chr(34)
+    ai = a.get("ai_score", 0)
+    if ai >= 8:
+        fire = chr(128293)
+    elif ai >= 6:
+        fire = chr(11088)
+    else:
+        fire = ""
+    pub_str = ""
+    if a.get("pub_dt"):
+        pub_str = a["pub_dt"].strftime("%b %d, %H:%M UTC")
+    summary = a.get("ai_summary", "") or ""
+    fit = a.get("ai_fit", "") or ""
+    score_badge = f" [{ai}/10]" if ai else ""
+    return (
+        LT + "div class=" + Q + "article" + Q + GT + NL +
+        LT + "div class=" + Q + "article-meta" + Q + GT + NL +
+        LT + "span class=" + Q + "source" + Q + GT + a["source"] + LT + "/span" + GT + NL +
+        LT + "span class=" + Q + "date" + Q + GT + pub_str + LT + "/span" + GT + NL +
+        (LT + "span class=" + Q + "hot" + Q + GT + fire + LT + "/span" + GT + NL if fire else "") +
+        LT + "/div" + GT + NL +
+        LT + "a href=" + Q + a["link"] + Q + " class=" + Q + "article-title" + Q + GT + a["title"] + score_badge + LT + "/a" + GT + NL +
+        (LT + "p class=" + Q + "article-summary" + Q + GT + summary + LT + "/p" + GT + NL if summary else "") +
+        (LT + "p class=" + Q + "article-fit" + Q + GT + LT + "strong" + GT + "Why it fits: " + LT + "/strong" + GT + fit + LT + "/p" + GT + NL if fit else "") +
+        LT + "/div" + GT + NL
+    )
+
+
+def build_html(sections, config):
+    """Build the multi-section digest HTML.
+
+    `sections` is a list of (category_config, [articles]) tuples in the order
+    to render.
+    """
     today = datetime.now().strftime("%A, %B %d %Y")
     LT = chr(60)
     GT = chr(62)
     NL = chr(10)
     Q = chr(34)
 
-    items_html = ""
-    for a in articles:
-        ai = a.get("ai_score", 0)
-        if ai >= 8:
-            fire = chr(128293)
-        elif ai >= 6:
-            fire = chr(11088)
-        else:
-            fire = ""
-        pub_str = ""
-        if a.get("pub_dt"):
-            pub_str = a["pub_dt"].strftime("%b %d, %H:%M UTC")
-        summary = a.get("ai_summary", "") or ""
-        fit = a.get("ai_fit", "") or ""
-        score_badge = f" [{ai}/10]" if ai else ""
-        items_html += (
-            LT + "div class=" + Q + "article" + Q + GT + NL +
-            LT + "div class=" + Q + "article-meta" + Q + GT + NL +
-            LT + "span class=" + Q + "source" + Q + GT + a["source"] + LT + "/span" + GT + NL +
-            LT + "span class=" + Q + "date" + Q + GT + pub_str + LT + "/span" + GT + NL +
-            (LT + "span class=" + Q + "hot" + Q + GT + fire + LT + "/span" + GT + NL if fire else "") +
-            LT + "/div" + GT + NL +
-            LT + "a href=" + Q + a["link"] + Q + " class=" + Q + "article-title" + Q + GT + a["title"] + score_badge + LT + "/a" + GT + NL +
-            (LT + "p class=" + Q + "article-summary" + Q + GT + summary + LT + "/p" + GT + NL if summary else "") +
-            (LT + "p class=" + Q + "article-fit" + Q + GT + LT + "strong" + GT + "Why it fits: " + LT + "/strong" + GT + fit + LT + "/p" + GT + NL if fit else "") +
+    body_html = ""
+    total = 0
+    for cat, arts in sections:
+        if not arts:
+            continue
+        total += len(arts)
+        header = (
+            LT + "div class=" + Q + "section-header" + Q + GT + NL +
+            LT + "h2" + GT + cat.get("emoji", "") + " " + cat["title"] +
+            LT + "span class=" + Q + "section-count" + Q + GT +
+            " " + str(len(arts)) + " stories" + LT + "/span" + GT +
+            LT + "/h2" + GT + NL +
             LT + "/div" + GT + NL
         )
+        items = "".join(_render_article(a) for a in arts)
+        body_html += header + items
 
-    return _html_wrapper(today, config, items_html, len(articles))
+    return _html_wrapper(today, config, body_html, total)
 
 
-def _html_wrapper(today, config, items_html, article_count):
+def _html_wrapper(today, config, body_html, total):
     LT = chr(60)
     GT = chr(62)
     NL = chr(10)
@@ -342,10 +454,10 @@ def _html_wrapper(today, config, items_html, article_count):
         LT + "div class=" + Q + "header" + Q + GT + NL +
         LT + "h1" + GT + title + LT + "/h1" + GT + NL +
         LT + "div class=" + Q + "date" + Q + GT + today + LT + "/div" + GT + NL +
-        LT + "span class=" + Q + "badge" + Q + GT + str(article_count) + " stories - keyword-filtered, AI-scored" + LT + "/span" + GT + NL +
+        LT + "span class=" + Q + "badge" + Q + GT + str(total) + " stories - keyword-filtered, AI-scored" + LT + "/span" + GT + NL +
         LT + "/div" + GT + NL +
         LT + "div class=" + Q + "content" + Q + GT + NL +
-        items_html +
+        body_html +
         LT + "/div" + GT + NL +
         LT + "div class=" + Q + "footer" + Q + GT + "Powered by Nexus AI" + LT + "/div" + GT + NL +
         LT + "/body" + GT + NL +
@@ -363,6 +475,9 @@ def _get_css(SC, NL):
         ".header .date { color: #8888aa" + s + " margin-top: 8px" + s + " font-size: 14px" + s + " }",
         ".badge { display: inline-block" + s + " background: rgba(124,109,250,0.2)" + s + " border: 1px solid rgba(124,109,250,0.4)" + s + " color: #7c6dfa" + s + " padding: 4px 14px" + s + " border-radius: 20px" + s + " font-size: 12px" + s + " margin-top: 12px" + s + " }",
         ".content { max-width: 720px" + s + " margin: 0 auto" + s + " padding: 24px 16px" + s + " }",
+        ".section-header { margin: 28px 0 14px" + s + " padding: 0 4px 8px" + s + " border-bottom: 1px solid #2e2e42" + s + " }",
+        ".section-header h2 { margin: 0" + s + " font-size: 20px" + s + " color: #e8e8f0" + s + " font-weight: 700" + s + " }",
+        ".section-count { font-size: 12px" + s + " color: #8888aa" + s + " font-weight: 400" + s + " margin-left: 8px" + s + " }",
         ".article { background: #1a1a24" + s + " border: 1px solid #2e2e42" + s + " border-radius: 10px" + s + " padding: 16px 18px" + s + " margin-bottom: 12px" + s + " }",
         ".article-meta { display: flex" + s + " align-items: center" + s + " gap: 10px" + s + " margin-bottom: 8px" + s + " }",
         ".source { font-size: 11px" + s + " font-weight: 700" + s + " text-transform: uppercase" + s + " color: #7c6dfa" + s + " }",
@@ -386,7 +501,6 @@ def run_digest(topic):
     try:
         articles = fetch_all_articles()
         print(f"  Got {len(articles)} unique articles")
-
         if not articles:
             print("  No articles found, skipping.")
             return
@@ -398,40 +512,31 @@ def run_digest(topic):
                 new_articles.append(a)
                 mark_seen(db, a["link"], a["title"])
         db.close()
-
-        print(f"  {len(new_articles)} new articles (after dedup)")
+        print(f"  {len(new_articles)} new articles (after URL dedup)")
         if not new_articles:
             print("  All articles already sent, skipping.")
             return
 
-        threshold = config.get("keyword_threshold", 4)
-        ai_limit = config.get("ai_score_limit", 80)
-        candidates = keyword_prefilter(new_articles, threshold, ai_limit)
-        print(f"  {len(candidates)} candidates after keyword filter (threshold={threshold})")
-        if not candidates:
-            print("  No candidates passed keyword filter, skipping.")
+        sections = []
+        used_links = set()
+        for cat in config["categories"]:
+            pool = [a for a in new_articles if a["link"] not in used_links]
+            ranked = process_category(pool, cat)
+            for a in ranked:
+                used_links.add(a["link"])
+            sections.append((cat, ranked))
+
+        total = sum(len(a) for _, a in sections)
+        if total == 0:
+            print("  No stories in any section, skipping.")
             return
 
-        scored = score_articles_ai(candidates)
-
-        hist = {}
-        for a in scored:
-            hist[a.get("ai_score", 0)] = hist.get(a.get("ai_score", 0), 0) + 1
-        print(f"  AI score histogram: {dict(sorted(hist.items(), reverse=True))}")
-
-        ai_min = config.get("ai_min_score", 4)
-        digest_limit = config.get("digest_limit", 40)
-        final = [a for a in scored if a.get("ai_score", 0) >= ai_min][:digest_limit]
-        print(f"  {len(final)} stories in final digest (ai_min={ai_min})")
-        if not final:
-            print("  No stories passed AI score floor, skipping.")
-            return
-
-        html = build_html(final, config)
+        html = build_html(sections, config)
         today = datetime.now().strftime("%B %d, %Y")
         emoji = config.get("emoji", "")
         digest_title = config.get("title", topic)
-        subject = emoji + " " + digest_title + " - " + today + " (" + str(len(final)) + " stories)"
+        breakdown = ", ".join(f"{len(a)} {c['key']}" for c, a in sections if a)
+        subject = f"{emoji} {digest_title} - {today} ({breakdown})"
         send_email(html, subject, config["recipients"])
         print(f"  Done! Sent to {len(config['recipients'])} recipients")
     except Exception as e:

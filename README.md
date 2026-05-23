@@ -1,30 +1,42 @@
-# Streaming News Bot
+# Streaming & Tech News Bot
 
-Daily email digest for myStaze. Focus: the live streaming & broadcasting industry —
-platforms (Twitch, Kick, YouTube Live, TikTok Live, DAZN, ESPN+, Fight Pass),
-broadcast rights deals, live streaming tech, live sports distribution, live music
-and performing arts streaming. Combat sports is a preferred vertical *for the
-streaming/rights angle* — not fight cards or rankings.
+Daily email digest for myStaze. Two sections per email:
+
+1. **Live Streaming & Broadcasting** — platforms (Twitch, Kick, YouTube Live,
+   TikTok Live, DAZN, ESPN+, Fight Pass), broadcast/streaming rights deals,
+   live streaming tech, live sports distribution, live music and performing
+   arts streaming. Combat sports is a preferred vertical *for the
+   streaming/rights angle* — not fight cards or rankings.
+2. **Hot Tech for Startups** — cutting-edge tech a founder/CTO would want to
+   stay sharp on: frontier AI models, agentic systems, dev tooling, startup
+   funding rounds in deep tech, novel hardware, platform shifts.
 
 ## Philosophy
 
-Cast a wide net across general tech, business, media, and industry publications
-rather than chasing niche streaming-only sources. A refined weighted keyword
-algorithm surfaces live-streaming-relevant articles wherever they appear, and
-Claude Haiku then scores each survivor, writes a short summary, and explains why
-it fits. No categories — just one ranked list.
+Per-category source sets and keyword filters. The streaming category casts a
+wide net across general tech / media / sports business / music / community
+sources with tight streaming-specific keywords. The tech category uses a small
+curated set of high-signal tech publications with looser keywords, letting the
+AI ranker do most of the work. Hard headline blocklist drops clickbait like
+"how to watch X" outright in both sections.
 
 Pipeline per run:
-1. Fetch every source in `FEEDS` (general tech, media, sports business, music,
-   community signals).
-2. Drop articles older than 48h, dedupe by title, drop URLs already seen.
-3. Keyword pre-filter: each article gets a score from `STREAMING_KEYWORDS` (with
-   negative penalties from `NEGATIVE_KEYWORDS`). Articles below
-   `keyword_threshold` are dropped; the top `ai_score_limit` go to AI.
-4. Claude Haiku scores 1-10, writes a one-line summary and a "why it fits" note.
-5. Top `digest_limit` stories at or above `ai_min_score` are emailed.
+1. Fetch every source in `FEEDS` (union across categories).
+2. Drop articles older than 48h, drop URLs already seen, drop cross-source
+   near-duplicates via token-overlap Jaccard on the headline.
+3. For each category, in declared order:
+   - Restrict to that category's sources.
+   - Apply `TITLE_BLOCKLIST` (hard drop).
+   - Keyword-score with the category's keyword dict + negative keywords.
+     Drop below `keyword_threshold`; pass the top `ai_score_limit` to AI.
+   - Claude Haiku scores 1-10 against the category's interest profile,
+     writes a one-line summary and a "why it fits" note.
+   - Keep top `digest_limit` at or above `ai_min_score`.
+   - Articles routed to this section are skipped in later sections.
+4. Render the multi-section email and send via Gmail API.
 
-Tune the gates in `feeds.py` → `DIGEST_CONFIG["streaming"]`.
+Tune the gates per category in `feeds.py` →
+`DIGEST_CONFIG["streaming"]["categories"]`.
 
 ## Setup
 
@@ -46,10 +58,13 @@ Tune the gates in `feeds.py` → `DIGEST_CONFIG["streaming"]`.
 See `feeds.py` → `DIGEST_CONFIG["streaming"]["recipients"]`.
 
 ## Sources
-General tech (TechCrunch, The Verge, Ars Technica, Wired, Engadget, VentureBeat,
-Mashable, TechRadar, ZDNet, 9to5Mac, 9to5Google, Hacker News, MIT Tech Review),
-media/business (Digiday, Adweek, Fast Company, Axios), TV/film (Variety,
-Deadline, Hollywood Reporter), streaming trade (StreamTV Insider, TV Tech, Next
-TV, Light Reading), sports business (SportsPro Media, Front Office Sports,
-Sportico), music industry (Music Business Worldwide, Pollstar, Music Ally,
-Billboard Biz), and community signals (Reddit cordcutters/Twitch/LivestreamFail).
+
+**Tech category (curated, signal-rich):** TechCrunch, The Verge, Ars Technica,
+Wired, VentureBeat, Hacker News, MIT Tech Review, The Information, IEEE Spectrum.
+
+**Streaming category (broad net):** all of the above, plus Engadget, Mashable,
+TechRadar, ZDNet, 9to5Mac, 9to5Google, Digiday, Adweek, Fast Company, Axios,
+Variety, Deadline, Hollywood Reporter, StreamTV Insider, TV Tech, Next TV,
+Light Reading, SportsPro Media, Front Office Sports, Sportico, Music Business
+Worldwide, Pollstar, Music Ally, Billboard Biz, and Reddit r/cordcutters,
+r/Twitch, r/LivestreamFail.

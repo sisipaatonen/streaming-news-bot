@@ -20,31 +20,61 @@ No PRs are needed — the user merges directly to `master`.
 ## Architecture
 
 - `main.py` — long-running worker; schedules `run_digest` daily per
-  `DIGEST_CONFIG` entry. Use `RUN_ON_START=true` (and optionally `RUN_TOPIC`)
-  to fire immediately on deploy for testing.
-- `bot.py` — fetches feeds, dedups against SQLite `seen_articles`, runs the
-  keyword pre-filter, calls AI scoring, builds HTML, sends via Gmail API.
-- `scorer.py` — Claude Haiku scoring; returns `ai_score`, `ai_summary`,
-  `ai_fit` per article.
-- `feeds.py` — `FEEDS` (wide source list), `STREAMING_KEYWORDS` (weighted),
-  `NEGATIVE_KEYWORDS`, `INTEREST_PROFILE`, `DIGEST_CONFIG`.
+  top-level `DIGEST_CONFIG` entry. Use `RUN_ON_START=true` (and optionally
+  `RUN_TOPIC`) to fire immediately on deploy for testing.
+- `bot.py` — fetches feeds, dedups (URL via SQLite `seen_articles` +
+  cross-source Jaccard on significant title tokens), then processes each
+  category in `DIGEST_CONFIG[topic]["categories"]` independently with its
+  own sources / keywords / interest profile / thresholds. Builds a
+  multi-section HTML email and sends via Gmail API.
+- `scorer.py` — Claude Haiku scoring; takes an `interest_profile`
+  parameter so each category scores against its own profile. Returns
+  `ai_score`, `ai_summary`, `ai_fit` per article.
+- `feeds.py` — feed lists, per-category keyword dictionaries, interest
+  profiles, hard `TITLE_BLOCKLIST`, and `DIGEST_CONFIG` with a
+  `categories` list per digest.
+
+## Categories
+
+The digest has two sections, declared in
+`DIGEST_CONFIG["streaming"]["categories"]` and processed in order:
+
+1. **streaming** — broad source set (`STREAMING_SOURCES`: general tech +
+   media + sports business + music + community), tight streaming-specific
+   keywords (`STREAMING_KEYWORDS` / `STREAMING_NEGATIVE_KEYWORDS`),
+   `STREAMING_INTEREST_PROFILE`.
+2. **tech** — small vetted source set (`TECH_SOURCES`: just the
+   signal-rich general-tech publications), looser tech/startup keywords
+   (`TECH_KEYWORDS` / `TECH_NEGATIVE_KEYWORDS`), `TECH_INTEREST_PROFILE`.
+
+Articles assigned to an earlier category never reappear in a later one
+within the same run.
 
 ## Filter philosophy
 
-Cast a wide net across general tech/media/business feeds. Don't add niche
-streaming-only sources just because they "fit." The weighted keyword filter
-(title matches doubled, negative penalties) is the primary instrument for
-finding relevant articles; the AI is the final ranker and writes the
-summary + "why it fits" note. No categories — one flat ranked list.
+For **streaming**: cast a wide net across publications, rely on tight
+weighted keywords (title matches doubled, negative penalties) to surface
+the live-streaming/broadcasting angle. AI is the final ranker.
 
-Tune behaviour via `DIGEST_CONFIG["streaming"]`:
+For **tech**: keep the source list curated and small. Keywords are loose
+(low `keyword_threshold`) because the sources themselves are already
+filtered for signal. AI does most of the ranking.
+
+`TITLE_BLOCKLIST` is a hard pre-filter applied to BOTH categories — every
+tuple is a set of substrings that, if ALL present in the lowercased
+title, drops the article outright. Use it for clickbait patterns
+("how to watch", "watch ... for free") that no scoring tweak can save.
+
+Tune per-category via the section's own keys:
 `keyword_threshold`, `ai_score_limit`, `ai_min_score`, `digest_limit`.
 
 ## Things to avoid
 
 - Don't push only to a feature branch and expect it to deploy.
-- Don't reintroduce per-category sections in the email — the user wants a
-  single ranked list.
 - Don't add sources like Awful Announcing that flood the digest with
   fight-card / recap noise. Sports business sources should be
   rights/distribution-focused (SportsPro, Front Office Sports, Sportico).
+- Don't put gadget-review / leak-heavy pubs (Engadget, TechRadar, ZDNet,
+  9to5*, Mashable) into `TECH_SOURCES` — they live in streaming-only on
+  purpose; the tech category is for cutting-edge / startup-relevant
+  signal, not consumer commerce.

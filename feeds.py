@@ -321,8 +321,6 @@ DIGEST_CONFIG = {
             "olli.karikoski@mystaze.com",
             "joonas.palkonen@mystaze.com",
             "bjorn.masalin@gmail.com",
-            "sarah@wavelength.now",
-            "al@extremeinternational.com",
         ],
         # Categories are processed in order. An article assigned to an earlier
         # category will not appear in a later one.
